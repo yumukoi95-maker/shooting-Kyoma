@@ -1,10 +1,14 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>KYOMA - Pixel Fighting Arena</title>
+
+<!-- Load Brython -->
+<script src="https://cdn.jsdelivr.net/npm/brython@3.12.0/brython.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/brython@3.12.0/brython_stdlib.js"></script>
+
 <style>
 * { box-sizing:border-box; }
 body {
@@ -84,7 +88,7 @@ button:hover { background:#9158df; }
 }
 </style>
 </head>
-<body>
+<body onload="brython()">
 
 <header>
   <h1>KYOMA</h1>
@@ -104,7 +108,7 @@ button:hover { background:#9158df; }
     <br>
     KEYBOARD: A / D = MOVE · W = JUMP · S = BLOCK
     <br>
-    J = PUNCH · K = KICK · L = SPECIAL ATTACK
+    J = PUNCH · K = KICK · L = SPECIAL · H = PYTHON HEAL · U = PYTHON FIREBALL
   </div>
 
   <div class="controls">
@@ -112,7 +116,8 @@ button:hover { background:#9158df; }
     <button data-key="d">RIGHT ▶</button>
     <button data-key="w">JUMP</button>
     <button data-key="s">BLOCK</button>
-    <button data-key="j">PUNCH">PUNCH</button>
+    <button data-key="j">PUNCH</button>
+    <button data-key="k">KICK</button>
     <button data-key="l">SPECIAL</button>
   </div>
 </div>
@@ -130,7 +135,12 @@ ctx.imageSmoothingEnabled = false;
 const W = 960;
 const H = 540;
 const FLOOR = 440;
-const GRAVITY = 0.65;
+
+let GRAVITY = 0.65;
+let KICK_DAMAGE = 12;
+let KICK_RANGE = 82;
+let PUNCH_DAMAGE = 7;
+let PUNCH_RANGE = 64;
 
 let running = false;
 let gameOver = false;
@@ -174,7 +184,7 @@ function fighter(x, side, palette, name) {
   return {
     x, y:FLOOR, vx:0, vy:0,
     side, palette, name,
-    hp:100, facing:side,
+    hp:100, maxHp:100, facing:side,
     grounded:true,
     blocking:false,
     attack:null,
@@ -197,6 +207,10 @@ function resetFighters() {
   projectiles = [];
   particles = [];
   cpuThink = 0;
+
+  if (typeof window.onRoundStart === "function") {
+    try { window.onRoundStart(); } catch(e) {}
+  }
 }
 
 function startGame() {
@@ -264,7 +278,6 @@ function drawBackground() {
   ctx.fillStyle=sky;
   ctx.fillRect(0,0,W,H);
 
-  // Moon
   ctx.fillStyle="#ffdc91";
   ctx.beginPath();
   ctx.arc(750,105,48,0,Math.PI*2);
@@ -274,14 +287,12 @@ function drawBackground() {
   ctx.arc(770,92,42,0,Math.PI*2);
   ctx.fill();
 
-  // Stars
   for(let i=0;i<35;i++){
     const x=(i*173+41)%W;
     const y=(i*79+17)%250;
     rect(x,y,3,3,"#e5d5ff");
   }
 
-  // Mountains
   for(let i=0;i<8;i++){
     const x=i*145-50;
     ctx.fillStyle=i%2?"#302b54":"#282547";
@@ -292,7 +303,6 @@ function drawBackground() {
     ctx.fill();
   }
 
-  // Temple silhouette
   rect(365,265,230,130,"#211e3c");
   rect(340,250,280,20,"#12162d");
   rect(400,215,160,35,"#211e3c");
@@ -302,7 +312,6 @@ function drawBackground() {
   rect(375,300,12,50,"#e7a65b");
   rect(573,300,12,50,"#e7a65b");
 
-  // Floor
   rect(0,FLOOR,W,H-FLOOR,"#30233d");
   rect(0,FLOOR,W,8,"#e4a45c");
   for(let i=0;i<24;i++){
@@ -329,7 +338,6 @@ function drawFighter(f) {
     ctx.globalAlpha=0.5;
   }
 
-  // Shadow
   ctx.globalAlpha*=0.8;
   ctx.fillStyle="#100e1c";
   ctx.beginPath();
@@ -337,22 +345,24 @@ function drawFighter(f) {
   ctx.fill();
   ctx.globalAlpha=1;
 
-  // Legs
   let legSwing=f.moving && f.grounded ? Math.sin(f.anim*0.3)*7:0;
-  if(f.attack==="kick") legSwing=12;
+  if(f.attack==="kick" && f.attackTimer>0){
+    rect(-15,-29,12,23,c.dark);
+    rect(-17,-9,18,8,"#17182d");
+    rect(4,-42,34,11,c.dark);
+    rect(34,-45,12,14,"#17182d");
+  } else {
+    rect(-15,-29,12,23,c.dark);
+    rect(3,-29,12,23,c.dark);
+    rect(-17+legSwing,-9,18,8,"#17182d");
+    rect(2-legSwing,-9,18,8,"#17182d");
+  }
 
-  rect(-15,-29,12,23,c.dark);
-  rect(3,-29,12,23,c.dark);
-  rect(-17+legSwing,-9,18,8,"#17182d");
-  rect(2-legSwing,-9,18,8,"#17182d");
-
-  // Body
   rect(-17,-66,34,38,c.body);
   rect(-19,-63,38,8,c.dark);
   rect(-5,-57,10,17,c.dark);
   rect(-15,-38,30,5,c.belt);
 
-  // Arms
   if(f.blocking){
     rect(8,-66,12,25,c.skin);
     rect(9,-74,10,16,c.dark);
@@ -365,36 +375,29 @@ function drawFighter(f) {
     rect(-22,-64,11,22,c.skin);
   }
 
-  // Neck and head
   rect(-7,-78,14,12,c.skin);
   rect(-13,-102,26,27,c.skin);
 
-  // Hair
   rect(-15,-107,30,12,c.hair);
   rect(-17,-101,8,12,c.hair);
   rect(8,-101,9,10,c.hair);
   rect(-9,-113,8,8,c.hair);
   rect(1,-113,8,8,c.hair);
 
-  // Eyes
   rect(4,-91,4,4,"#17162a");
   rect(12,-91,4,4,"#17162a");
 
-  // Headband
   rect(-14,-99,28,5,c.belt);
   rect(-18,-100,7,4,c.belt);
 
-  // Belt tails
   rect(-8,-39,5,13,c.belt);
   rect(3,-39,5,10,c.belt);
 
   ctx.restore();
 
-  // Attack slash
   if(f.attack && f.attackTimer>0){
-    const progress=f.attackTimer;
     if(f.attack==="kick"){
-      text("✦",x+dir*53,y-55,29,"#ffdc65");
+      text("✦",x+dir*53,y-42,29,"#ffdc65");
     }
     if(f.attack==="punch"){
       text("✧",x+dir*43,y-68,25,"#fff2c1");
@@ -409,21 +412,24 @@ function drawHealth() {
   rect(35,27,barW,barH,"#20192f");
   rect(575,27,barW,barH,"#20192f");
 
-  rect(35,27,barW*(p1.hp/100),barH,"#e84352");
-  rect(575+barW*(1-cpu.hp/100),27,barW*(cpu.hp/100),barH,"#398ff1");
+  const p1Ratio = Math.min(1, Math.max(0, p1.hp / 100));
+  const cpuRatio = Math.min(1, Math.max(0, cpu.hp / 100));
+
+  rect(35,27,barW*p1Ratio,barH,"#e84352");
+  rect(575+barW*(1-cpuRatio),27,barW*cpuRatio,barH,"#398ff1");
 
   ctx.strokeStyle="#fff";
   ctx.lineWidth=3;
   ctx.strokeRect(35,27,barW,barH);
   ctx.strokeRect(575,27,barW,barH);
 
-  text("KYOMA",35,19,18,"#ffca65","left");
-  text("SHADOW",925,19,18,"#80c5ff","right");
+  text(p1.name,35,19,18,"#ffca65","left");
+  text(cpu.name,925,19,18,"#80c5ff","right");
 
   text("ROUND "+round,480,25,15,"#fff");
   text(String(Math.ceil(timer)).padStart(2,"0"),480,72,30,"#ffda83");
-  text("P1",35,70,12,"#fff","left");
-  text("CPU",925,70,12,"#fff","right");
+  text("P1 ("+Math.ceil(p1.hp)+" HP)",35,70,12,"#fff","left");
+  text("CPU ("+Math.ceil(cpu.hp)+" HP)",925,70,12,"#fff","right");
 
   text("WINS: "+playerWins,35,88,12,"#ffca65","left");
   text("WINS: "+cpuWins,925,88,12,"#80c5ff","right");
@@ -466,13 +472,13 @@ function updateEffects(dt) {
 }
 
 function attack(f,type) {
-  if(!running || roundOver || gameOver || f.stunned>0) return;
-  if(f.cooldown>0 || f.attackTimer>0) return;
+  if(!running) startGame();
+  if(roundOver || gameOver || f.stunned>0) return;
 
   if(type==="special"){
     if(f.specialCooldown>0) return;
     f.specialCooldown=150;
-    f.cooldown=40;
+    f.cooldown=30;
     projectiles.push({
       x:f.x+f.facing*35,
       y:f.y-55,
@@ -485,28 +491,30 @@ function attack(f,type) {
     return;
   }
 
+  if(f.cooldown>0 || f.attackTimer>0) return;
+
   f.attack=type;
   f.attackTimer=type==="punch"?19:29;
-  f.cooldown=type==="punch"?26:39;
+  f.cooldown=type==="punch"?22:32;
   f.hitDone=false;
   sound(type==="punch"?280:160,0.08);
 }
 
 function hit(attacker,defender,type) {
-  if(defender.invulnerable>0) return;
+  if(defender.invulnerable>0) return false;
 
-  const range=type==="punch"?64:82;
+  const range=type==="punch"?PUNCH_RANGE:KICK_RANGE;
   const distance=Math.abs(attacker.x-defender.x);
-  const front=(defender.x-attacker.x)*attacker.facing>0;
+  const front=(defender.x-attacker.x)*attacker.facing>=0;
 
-  if(distance>range || !front) return;
+  if(distance>range || !front) return false;
 
-  if(type==="kick" && defender.y<FLOOR-50) return;
+  if(type==="kick" && defender.y<FLOOR-70) return false;
 
   const blocked=defender.blocking && defender.grounded &&
-    (defender.x-attacker.x)*defender.facing<0;
+    (attacker.x-defender.x)*defender.facing>0;
 
-  let damage=type==="punch"?7:12;
+  let damage=type==="punch"?PUNCH_DAMAGE:KICK_DAMAGE;
   if(blocked) damage=2;
 
   defender.hp=Math.max(0,defender.hp-damage);
@@ -519,6 +527,7 @@ function hit(attacker,defender,type) {
   screenFlash=blocked?2:4;
   shake=blocked?2:5;
   sound(blocked?500:95,0.12);
+  return true;
 }
 
 function updateFighter(f,enemy,dt,isPlayer) {
@@ -613,14 +622,15 @@ function updateFighter(f,enemy,dt,isPlayer) {
 
   f.vx*=Math.pow(0.92,dt);
 
-  if(f.attack && f.attackTimer>5 && !f.hitDone){
+  if(f.attack && f.attackTimer>4 && !f.hitDone){
     const active=f.attack==="punch"
-      ? f.attackTimer<15 && f.attackTimer>7
-      : f.attackTimer<23 && f.attackTimer>10;
+      ? f.attackTimer<=17 && f.attackTimer>=6
+      : f.attackTimer<=26 && f.attackTimer>=8;
 
     if(active){
-      f.hitDone=true;
-      hit(f,enemy,f.attack);
+      if(hit(f,enemy,f.attack)){
+        f.hitDone=true;
+      }
     }
   }
 }
@@ -656,10 +666,10 @@ function finishRound(winner) {
 
   if(winner==="player"){
     playerWins++;
-    roundMessage="KYOMA WINS THE ROUND!";
+    roundMessage=p1.name+" WINS THE ROUND!";
   } else if(winner==="cpu"){
     cpuWins++;
-    roundMessage="SHADOW WINS THE ROUND!";
+    roundMessage=cpu.name+" WINS THE ROUND!";
   } else {
     roundMessage="DRAW!";
   }
@@ -669,7 +679,7 @@ function finishRound(winner) {
 
   if(playerWins>=2 || cpuWins>=2){
     gameOver=true;
-    message.textContent=playerWins>=2?"🏆 KYOMA IS THE CHAMPION!":"SHADOW WINS THE MATCH!";
+    message.textContent=playerWins>=2?"🏆 "+p1.name+" IS THE CHAMPION!":cpu.name+" WINS THE MATCH!";
   }
 }
 
@@ -687,7 +697,6 @@ function update(dt) {
   updateFighter(p1,cpu,dt,true);
   updateFighter(cpu,p1,dt,false);
 
-  // Prevent fighters from overlapping
   const gap=Math.abs(cpu.x-p1.x);
   if(gap<43 && Math.abs(cpu.y-p1.y)<70){
     const push=(43-gap)/2;
@@ -725,7 +734,7 @@ function drawOverlay() {
   if(!running){
     ctx.fillStyle="rgba(10,8,25,0.72)";
     ctx.fillRect(0,0,W,H);
-    text("KYOMA",480,190,65,"#ffca55");
+    text(p1 ? p1.name : "KYOMA",480,190,65,"#ffca55");
     text("PIXEL FIGHTING ARENA",480,235,23,"#fff");
     text("FIGHT YOUR WAY TO VICTORY",480,290,17,"#d7baff");
     text("PRESS START",480,365,22,"#ffe48b");
@@ -742,7 +751,7 @@ function drawOverlay() {
     ctx.fillStyle="rgba(8,5,20,0.8)";
     ctx.fillRect(0,0,W,H);
     text("MATCH OVER",480,175,36,"#ffdb70");
-    text(playerWins>=2?"KYOMA CHAMPION!":"SHADOW CHAMPION!",480,250,29);
+    text(playerWins>=2?p1.name+" CHAMPION!":cpu.name+" CHAMPION!",480,250,29);
     text("PRESS REMATCH TO PLAY AGAIN",480,320,19,"#fff");
   }
 }
@@ -757,7 +766,6 @@ function render() {
   drawBackground();
   drawHealth();
 
-  // Special energy bars
   rect(35,105,160,8,"#211d32");
   rect(35,105,160*(1-p1.specialCooldown/150),8,"#ffcf55");
   rect(765,105,160,8,"#211d32");
@@ -790,6 +798,9 @@ window.addEventListener("keydown",e=>{
   if(["arrowleft","arrowright","arrowup","arrowdown"," "].includes(k)){
     e.preventDefault();
   }
+  if(!running && ["a","d","w","s","j","k","l"].includes(k)){
+    startGame();
+  }
   if(!keys[k]) pressed[k]=true;
   keys[k]=true;
 });
@@ -807,6 +818,7 @@ document.querySelectorAll("[data-key]").forEach(btn=>{
   const k=btn.dataset.key;
   btn.addEventListener("pointerdown",e=>{
     e.preventDefault();
+    if(!running) startGame();
     keys[k]=true;
     pressed[k]=true;
     btn.setPointerCapture(e.pointerId);
@@ -827,12 +839,87 @@ document.getElementById("restart").addEventListener("click",()=>{
   startGame();
 });
 
-// Initial screen
+window.Arena = {
+  getP1: () => p1,
+  getCPU: () => cpu,
+  colors: colors,
+  setGravity: (g) => { GRAVITY = g; },
+  setKickDamage: (dmg) => { KICK_DAMAGE = dmg; },
+  setKickRange: (rng) => { KICK_RANGE = rng; },
+  setPunchDamage: (dmg) => { PUNCH_DAMAGE = dmg; },
+  attack: (who, type) => {
+    const f = who === "p1" ? p1 : cpu;
+    f.cooldown = 0;
+    f.attackTimer = 0;
+    attack(f, type);
+  },
+  spawnHit: (x, y, color) => spawnHit(x, y, color)
+};
+
 resetFighters();
 render();
 requestAnimationFrame(loop);
 
 })();
 </script>
+
+<!-- ================================================================= -->
+<!-- KYOMA'S PYTHON LESSONS RUNNING IN BACKGROUND                      -->
+<!-- ================================================================= -->
+<script type="text/python">
+from browser import document, window
+
+# LESSON 1: Colors & Names
+hero_name = "KYOMA"
+boss_name = "SHADOW"
+outfit_color = "#e9434e"
+belt_color = "#f5d56c"
+
+window.Arena.colors.player.body = outfit_color
+window.Arena.colors.player.belt = belt_color
+
+# LESSON 2: Stats & Gravity
+def setup_round():
+    p1 = window.Arena.getP1()
+    cpu = window.Arena.getCPU()
+    p1.name = hero_name
+    cpu.name = boss_name
+    p1.hp = 100
+    cpu.hp = 100
+    window.Arena.setGravity(0.65)
+    window.Arena.setKickDamage(16)
+    window.Arena.setKickRange(95)
+
+setup_round()
+window.onRoundStart = setup_round
+
+# LESSON 3: Python Super Kick
+def python_super_kick(event=None):
+    p1 = window.Arena.getP1()
+    window.Arena.attack("p1", "kick")
+    p1.vx = p1.facing * 6.5
+    window.Arena.spawnHit(p1.x + (p1.facing * 45), p1.y - 42, "#ff9900")
+
+kick_button = document.select_one('button[data-key="k"]')
+if kick_button:
+    kick_button.bind("pointerdown", python_super_kick)
+
+# LESSON 4: Keyboard Controls
+def python_keys(event):
+    key = event.key.lower()
+    p1 = window.Arena.getP1()
+    if key == "k":
+        python_super_kick()
+    elif key == "h":
+        if p1.hp < 100:
+            p1.hp = min(100, p1.hp + 20)
+            window.Arena.spawnHit(p1.x, p1.y - 50, "#00ff88")
+    elif key == "u":
+        p1.specialCooldown = 0
+        window.Arena.attack("p1", "special")
+
+document.bind("keydown", python_keys)
+</script>
+
 </body>
 </html>
